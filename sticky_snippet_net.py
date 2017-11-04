@@ -7,6 +7,7 @@ import sys
 import tensorflow as tf
 import numpy as np
 import string
+import timeit
 
 #global variables
 mode_fun = None
@@ -19,9 +20,13 @@ count_34 = 0
 count_56 = 0
 count_78 = 0
 count_stick = 0
-learning_rate = 0.5
+learning_rate = 0.01
 accuracy = None
+loss_fun = None
 epoch = 20
+batch_size = 1000
+num_classes = 6
+confusion = None
 
 one_hot_dict = {
     "12-STICKY": 0,
@@ -74,7 +79,7 @@ def one_hot_encoding(label):
 
 def translate(x):
     inp = "ABCD"
-    out = "1234"
+    out = "0123"
     s = string.translate(x, string.maketrans(inp,out))
     x_vec = [float(i) for i in s]
     # print "x_vec: ",x_vec
@@ -110,81 +115,86 @@ def read_data():
             x.append(x_data)
             y.append(y_data)
 
-    return np.transpose(x), np.transpose(y)
+    return x,y #np.transpose(x), np.transpose(y)
 
+# def print_number()
 
 def perceptron(w_name, w_shape, input, b_name, b_shape, init):
     W = tf.get_variable(w_name, shape=w_shape, initializer=init)
     b = tf.get_variable(b_name, shape=b_shape, initializer=init)
     # print "x: ",input.shape, " W: ", w_shape, " b: ", b_shape
-    return tf.nn.relu(tf.matmul(W, input) + b)
+    return tf.nn.relu(tf.matmul(input, W) + b)
 
 
-def nn():
+def nn(confusion_matrix = False):
 
     init = tf.contrib.layers.xavier_initializer()
-    x = tf.placeholder(dtype=tf.float32, shape=(40, None))
-    y = tf.placeholder(dtype=tf.float32, shape=(6, None))
+    x = tf.placeholder(dtype=tf.float32, shape=(None, 40))
+    y = tf.placeholder(dtype=tf.float32, shape=(None, 6))
     # layer 1
-    y1 = perceptron("W1", (6, 40), x, "b1", (6, 1), init)
+    y1 = perceptron("W1", (40, 6), x, "b1", (1, 6), init)
 
     # layer 2
-    y2 = perceptron("W2", (6, 6), y1, "b2", (6, 1), init)
+    y2 = perceptron("W2", (6, 20), y1, "b2", (1, 20), init)
 
     # layer 3
-    y3 = perceptron("W3", (6, 6), y2, "b3", (6, 1), init)
+    y3 = perceptron("W3", (20, 40), y2, "b3", (1, 40), init)
 
     # layer 4
-    y4 = perceptron("W4", (6, 6), y3, "b4", (6, 1), init)
-
-    # layer 5 (output)
-    # W = tf.get_variable("W3", shape=(6, 10), initializer=init)
-    # b = tf.get_variable("b3", shape=(10, 1), initializer=init)
-    # y5 = tf.matmul(W, y4) + b
+    y4 = perceptron("W4", (40, 6), y3, "b4", (1, 6), init)
 
     cross_entropy_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=y, logits=y4))  ##reduce_sum
 
-    global accuracy
+    global accuracy,loss_fun
+    loss_fun = cross_entropy_loss
     with tf.name_scope('accuracy'):
         correct_prediction = tf.equal(tf.argmax(y4, 1), tf.argmax(y, 1))
         correct_prediction = tf.cast(correct_prediction, tf.float32)
     accuracy = tf.reduce_mean(correct_prediction)
 
+    if(confusion_matrix):
+        global confusion
+        confusion = tf.confusion_matrix(labels=tf.argmax(y, 1), predictions=tf.argmax(y4, 1), num_classes=num_classes)
+
     train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(cross_entropy_loss)
-    return train_step, x, y
+    return train_step, x, y  #  y4, x,y#
 
 
 def training():
     x_data, x_label = read_data()
-    total = np.shape(x_data)[1]
+    total = np.shape(x_data)[0]
     # print "total: ", total
     train, x, y = nn()
-    # print "x: ", np.shape(x_data)
-    # session = tf.Session()
-    # session.run(tf.global_variables_initializer())
-    # for i in range(0, total, 1000):
-    #     end = i+1000
-    #     batch = x_data[:, i:end]
-    #     y_ = x_label[:, i:end]
-    #     # print "batch: ", np.shape(batch), "y_: ", np.shape(y_)
-    #     session.run(train,feed_dict={x: batch, y: y_}) #feed_dict=
-    # saver = tf.train.Saver()
-    # saver.save(session, model_file) #+".ckpt"
-
+    global loss_fun
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        for _ in range(epoch):
-            for i in range(0, total, 100):
-                end = i + 100
-                batch = x_data[:, i:end]
-                y_ = x_label[:, i:end]
-                # print "i: ",i
-                if i % 2 == 0:
-                    train_accuracy = accuracy.eval(feed_dict={x: batch, y: y_})
-                    print('step %d, training accuracy %g' % (i, train_accuracy))
+        cnt = 0
+        for e in range(epoch):
+            start = timeit.default_timer()
+            for i in range(0, total, batch_size):
+                end = i + batch_size
+                batch = x_data[i:end]
+                y_ = x_label[i:end]
+                cnt += batch_size
                 train.run(feed_dict={x: batch, y: y_})
 
-        print('test accuracy %g' % accuracy.eval(feed_dict={x: x_data, y: x_label}))
+                if cnt % 1000 == 0:
+                    print cnt," items trained"
+
+            stop = timeit.default_timer()
+
+            print "Total testing time for epoch: ", e, " =>", stop - start, " seconds"
+                # sess.run([train_step, check_op], feed_dict={x: batch, y: y_})
+                # if i % 10 == 0:
+                #     train_accuracy = accuracy.eval(feed_dict={x: batch, y: y_})
+                #     print('step %d, training accuracy %g' % (i, train_accuracy))
+                    # loss = loss_fun.eval(feed_dict={x: batch, y: y_})
+                    # print "####step: ", i, "loss: ", loss
+
+        # print "####EPOCH: ", e,"loss: ",loss
+        # print('test accuracy %g' % accuracy.eval(feed_dict={x: x_data, y: x_label}))
+        print "Processing complete!"
+        print "Total number items trained on : ", total
 
         saver = tf.train.Saver()
         saver.save(sess, model_file)
@@ -193,6 +203,102 @@ def training():
 
 
 def fivefold_training():
+    x_data, y_label = read_data()
+    total = np.shape(x_data)[0]
+    fold = total/5
+    set_x = [[] for _ in xrange(5)]
+    set_y = [[] for _ in xrange(5)]
+    j = 0
+    # print "total: ", total
+
+    # Divide data into 5 equal sets
+    for i in range(0, total, fold):
+        end = i + fold
+        if end > total:
+            end = total
+        # print "i: ", i, " end: ", end
+        set_x[j] = x_data[i:end]
+        set_y[j] = y_label[i:end]
+        j += 1
+
+    train, x, y = nn(True)
+    total_acc = 0
+
+    # Iteratively choose each set from testing and rest for training
+    for i in range(5):
+        train_data, train_label = [], []
+        test_data, test_label = [], []
+        for j in range(5):
+            if i != j:
+                if len(train_data) == 0:
+                    train_data = set_x[i]
+                    train_label = set_y[i]
+                else:
+                    train_data = np.append(train_data, set_x[i], axis=0)
+                    train_label = np.append(train_label, set_y[i], axis=0)
+            else:
+                if len(test_data) == 0:
+                    test_data = set_x[i]
+                    test_label = set_y[i]
+                else:
+                    test_data = np.append(test_data, set_x[i], axis=0)
+                    test_label = np.append(test_label, set_y[i], axis=0)
+        # print "train_data: ", np.shape(train_data), " test: ", np.shape(test_data)
+        print
+
+        total = train_data.shape[0]
+        with tf.Session() as sess:
+            sess.run(tf.global_variables_initializer())
+            for e in range(epoch):
+                cnt = 0
+                print "Epoch: ", e, " starting"
+                for r in range(0, total, batch_size):
+                    end = r + batch_size
+                    batch = train_data[r:end]
+                    y_ = train_label[r:end]
+                    # print "i: ",i
+                    cnt += batch_size
+                    if cnt % 1000 == 0:
+                        print cnt ," items trained"
+                        # train_accuracy = accuracy.eval(feed_dict={x: batch, y: y_})
+                        # print('step %d, training accuracy %g' % (r, train_accuracy))
+
+                    start = timeit.default_timer()
+
+                    train.run(feed_dict={x: batch, y: y_})
+
+                    stop = timeit.default_timer()
+
+                    print "Total training time for epoch: ",e," =>",stop - start, " seconds"
+
+
+            # print('training accuracy(entire train data) %g' % accuracy.eval(feed_dict={x: train_data, y: train_label}))
+
+            #testing
+            start = timeit.default_timer()
+
+            acc = accuracy.eval(feed_dict={x: test_data, y: test_label})
+
+            stop = timeit.default_timer()
+
+            print "Total testing time for epoch: ", e, " =>", stop - start, " seconds"
+
+            # print('testing accuracy(entire test data) %g' % acc)
+            print "Processing complete!"
+            print "Total number items trained on : ", np.shape(train_data)[0]
+            print "Total number items tested on : ", np.shape(test_data)[0]
+            total_acc += acc
+
+            global confusion
+            print "Confusion Matrix: "
+            print tf.Tensor.eval(confusion,feed_dict={x: test_data, y: test_label}, session=sess)
+
+            if i == 4 :
+                saver = tf.train.Saver()
+                saver.save(sess, model_file)
+
+    print "Aggregate Accuracy: ", total_acc/5.0
+
     return 0
 
 
@@ -202,7 +308,11 @@ def testing():
     saver = tf.train.Saver()
     saver.restore(session, model_file)
     x_data, y_label = read_data()
+    # print "x_data: ",x_data.shape, "y_label: ", y_label.shape
     test_accuracy = accuracy.eval(session=session,feed_dict={x: x_data, y: y_label})
+
+    print "Processing complete!"
+    print "Total number items tested on : ", np.shape(x_data)[0]
     print('Testing accuracy %g' % (test_accuracy))
     return 0
 
